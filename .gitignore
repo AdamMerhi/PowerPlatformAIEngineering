@@ -1,0 +1,57 @@
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editors / IDEs
+.vscode/
+.idea/
+*.swp
+
+# Secrets and local config
+.env
+.env.*
+*.pfx
+*.key
+secrets.json
+local.settings.json
+
+# Claude Code local files
+.claude/settings.local.json
+CLAUDE.local.md
+
+# Power Platform tooling output
+out/
+bin/
+obj/
+*.zip
+*.msapp
+.pac/
+.power-platform/
+
+# Node / Python
+node_modules/
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Logs and temp
+*.log
+tmp/
+temp/
+
+# Snowflake / key material
+*.p8
+*.pem
+
+# Scratch output from setup diagnostics
+azout.txt
+m_*.json
+m_*.txt
+models.txt
+policy.txt
+poc_svc.pub
+
+# Keep the template
+!.env.example
