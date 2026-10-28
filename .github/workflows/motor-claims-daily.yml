@@ -108,3 +108,45 @@ jobs:
           name: dbt-target
           path: dbt/target
           retention-days: 7
+
+  dataverse_sync:
+    name: Sync CURATED.V_CLAIM_ASSESSMENT to Dataverse (DAG D)
+    needs: ingest
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Write Snowflake private key
+        run: |
+          echo "${{ secrets.SNOWFLAKE_PRIVATE_KEY_B64 }}" | base64 -d > "$RUNNER_TEMP/poc_svc.p8"
+
+      - name: Ensure Claim table exists (schema as code)
+        run: python -m claims_pipeline.dataverse create-table
+        env:
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          DATAVERSE_URL: ${{ secrets.DATAVERSE_URL }}
+
+      - name: Sync claims to Dataverse
+        run: python -m claims_pipeline.dataverse sync
+        env:
+          SNOWFLAKE_ACCOUNT: ${{ secrets.SNOWFLAKE_ACCOUNT }}
+          SNOWFLAKE_USER: ${{ secrets.SNOWFLAKE_USER }}
+          SNOWFLAKE_ROLE: ${{ secrets.SNOWFLAKE_ROLE }}
+          SNOWFLAKE_WAREHOUSE: ${{ secrets.SNOWFLAKE_WAREHOUSE }}
+          SNOWFLAKE_DATABASE: ${{ secrets.SNOWFLAKE_DATABASE }}
+          SNOWFLAKE_PRIVATE_KEY_PATH: ${{ runner.temp }}/poc_svc.p8
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          DATAVERSE_URL: ${{ secrets.DATAVERSE_URL }}
+          DATAVERSE_SOURCE_VIEW: CURATED.V_CLAIM_ASSESSMENT
