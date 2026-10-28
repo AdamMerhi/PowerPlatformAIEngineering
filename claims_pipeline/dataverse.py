@@ -78,6 +78,7 @@ APP_COLUMNS = [
     ("decisionreason", "memo"),
     ("decidedby", "string"),
     ("decidedat", "datetime"),
+    ("emailsentat", "datetime"),  # set by the case-closed email flow so a case is never emailed twice
 ]
 
 
@@ -89,6 +90,7 @@ LABELS = {
     "policyenddate": "Policy end", "lossdate": "Loss date", "recommendedoutcome": "Rules outcome",
     "citedclauses": "Cited clauses", "conditions": "Conditions", "decision": "Decision",
     "decisionreason": "Decision reason", "decidedby": "Decided by", "decidedat": "Decided at",
+    "emailsentat": "Email sent at",
     "summary": "Summary", "claimkey": "Claim key", "body": "Note", "author": "Author", "kind": "Type",
     "headline": "Headline", "outcome": "Outcome", "clauses": "Clauses", "pdsversion": "PDS version",
     "model": "Model", "agrees": "Agrees with PDS", "reasonsupported": "Reason supported",
