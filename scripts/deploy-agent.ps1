@@ -14,7 +14,11 @@ param(
   [string]$RegistryUser = "",
   [string]$RegistryToken = ""
 )
-$ErrorActionPreference = "Stop"
+# "Continue", not "Stop": Windows PowerShell 5.1 turns any text az writes to stderr (such as the harmless
+# "behavior altered by the containerapp extension" warning) into a terminating error. Real failures are
+# caught by the explicit $LASTEXITCODE checks below.
+$ErrorActionPreference = "Continue"
+function Assert-Az([string]$what) { if ($LASTEXITCODE -ne 0) { throw "$what failed (az exit code $LASTEXITCODE)" } }
 $env:Path = [Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [Environment]::GetEnvironmentVariable("Path","User")
 
 # Load .env into this session
@@ -44,6 +48,7 @@ $envExists = az containerapp env show -n $EnvName -g $ResourceGroup --query name
 if (-not $envExists) {
   Write-Host "Creating Container Apps environment $EnvName ..."
   az containerapp env create -n $EnvName -g $ResourceGroup -l $Location --only-show-errors | Out-Null
+  Assert-Az "Creating the Container Apps environment"
 }
 
 $secrets = @(
@@ -66,7 +71,9 @@ $appExists = az containerapp show -n $AppName -g $ResourceGroup --query name -o 
 if ($appExists) {
   Write-Host "Updating $AppName to $Image ..."
   az containerapp secret set -n $AppName -g $ResourceGroup --secrets @secrets --only-show-errors | Out-Null
+  Assert-Az "Setting secrets"
   az containerapp update -n $AppName -g $ResourceGroup --image $Image --set-env-vars @envVars --only-show-errors | Out-Null
+  Assert-Az "Updating the container app"
 } else {
   Write-Host "Creating $AppName from $Image ..."
   $create = @("-n", $AppName, "-g", $ResourceGroup, "--environment", $EnvName, "--image", $Image,
@@ -74,6 +81,7 @@ if ($appExists) {
               "--cpu", "1.0", "--memory", "2.0Gi", "--secrets") + $secrets + @("--env-vars") + $envVars
   if ($RegistryUser) { $create += @("--registry-server", "ghcr.io", "--registry-username", $RegistryUser, "--registry-password", $RegistryToken) }
   az containerapp create @create --only-show-errors | Out-Null
+  Assert-Az "Creating the container app"
 }
 
 $fqdn = az containerapp show -n $AppName -g $ResourceGroup --query properties.configuration.ingress.fqdn -o tsv
