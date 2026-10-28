@@ -1,0 +1,104 @@
+version: 2
+
+models:
+  - name: stg_motor_claims
+    description: >
+      Typed view over RAW.MOTOR_CLAIMS_RAW. policy_start_date,
+      policy_end_date and loss_date are derived deterministically from
+      a hash of each row (dataCar ships with no date fields) -- see
+      claims_pipeline/transform.py. They are real-looking dates inside
+      the dataset's true 2004-2005 policy window, not source truth.
+    columns:
+      - name: src_row_id
+        description: Deterministic hash key; one row per original dataCar record.
+        tests:
+          - unique
+          - not_null
+
+      - name: veh_value
+        tests:
+          - not_null
+          - dbt_utils.expression_is_true:
+              arguments:
+                expression: ">= 0"
+
+      - name: exposure
+        description: Fraction of the policy year covered, (0, 1].
+        tests:
+          - not_null
+          - dbt_utils.expression_is_true:
+              arguments:
+                expression: "> 0 and exposure <= 1"
+
+      - name: has_claim
+        tests:
+          - not_null
+
+      - name: numclaims
+        tests:
+          - not_null
+          - dbt_utils.expression_is_true:
+              arguments:
+                expression: ">= 0"
+
+      - name: claim_amount
+        tests:
+          - not_null
+          - dbt_utils.expression_is_true:
+              arguments:
+                expression: ">= 0"
+
+      - name: veh_age
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [1, 2, 3, 4]
+
+      - name: gender
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ["F", "M"]
+
+      - name: area
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ["A", "B", "C", "D", "E", "F"]
+
+      - name: agecat
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [1, 2, 3, 4, 5, 6]
+
+      - name: policy_start_date
+        tests:
+          - not_null
+          - dbt_utils.expression_is_true:
+              arguments:
+                expression: ">= '2004-01-01' and policy_start_date <= '2005-12-31'"
+
+      - name: policy_end_date
+        tests:
+          - not_null
+          - dbt_utils.expression_is_true:
+              arguments:
+                expression: "> policy_start_date"
+
+      - name: ingested_at
+        description: >
+          Stored as naive UTC (the column is TIMESTAMP_NTZ). Compared
+          against an explicit UTC conversion of current_timestamp(),
+          not current_timestamp() directly -- a bare NTZ-vs-TIMESTAMP_TZ
+          comparison is implicitly reinterpreted in the session
+          timezone, which would be wrong whenever that isn't UTC.
+        tests:
+          - not_null
+          - dbt_utils.expression_is_true:
+              arguments:
+                expression: "<= convert_timezone('UTC', current_timestamp())::timestamp_ntz"

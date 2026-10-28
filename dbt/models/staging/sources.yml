@@ -1,0 +1,20 @@
+version: 2
+
+sources:
+  - name: raw
+    database: "{{ env_var('SNOWFLAKE_DATABASE', 'CLAIMS_POC') }}"
+    schema: RAW
+    tables:
+      - name: motor_claims_raw
+        description: >
+          Australian motor insurance policies from dataCar (CRAN
+          insuranceData package), loaded by claims_pipeline.load.
+          policy_start_date / policy_end_date / loss_date are
+          deterministically derived (dataCar has no date fields) --
+          see claims_pipeline/transform.py.
+        columns:
+          - name: src_row_id
+            description: sha256 of source columns + row index; stable across runs, unique per source row.
+            tests:
+              - unique
+              - not_null
