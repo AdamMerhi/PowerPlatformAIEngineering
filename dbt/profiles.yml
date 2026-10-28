@@ -1,0 +1,19 @@
+# Reads from environment variables only -- no secrets committed.
+# SNOWFLAKE_PRIVATE_KEY_PATH points at a key-pair .p8 file (see
+# scripts/check_snowflake.py and claims_pipeline/config.py for the
+# same auth convention used elsewhere in this repo). In CI, the key
+# arrives base64-encoded as a secret and is written to a temp file
+# before dbt runs -- see .github/workflows/motor-claims-daily.yml.
+claims_motor_pipeline:
+  target: dev
+  outputs:
+    dev:
+      type: snowflake
+      account: "{{ env_var('SNOWFLAKE_ACCOUNT') }}"
+      user: "{{ env_var('SNOWFLAKE_USER', 'POC_SVC') }}"
+      role: "{{ env_var('SNOWFLAKE_ROLE', 'POC_ROLE') }}"
+      warehouse: "{{ env_var('SNOWFLAKE_WAREHOUSE', 'CLAIMS_WH') }}"
+      database: "{{ env_var('SNOWFLAKE_DATABASE', 'CLAIMS_POC') }}"
+      schema: "{{ env_var('SNOWFLAKE_SCHEMA', 'RAW') }}"
+      private_key_path: "{{ env_var('SNOWFLAKE_PRIVATE_KEY_PATH') }}"
+      threads: 4

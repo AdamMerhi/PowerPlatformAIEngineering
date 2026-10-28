@@ -1,0 +1,8 @@
+pandas>=2.2
+pyreadr>=0.5.8
+requests>=2.31
+snowflake-connector-python[pandas]>=3.12
+cryptography>=42
+apache-airflow>=3.3,<3.4
+dbt-core>=1.12,<1.13
+dbt-snowflake>=1.12,<1.13
