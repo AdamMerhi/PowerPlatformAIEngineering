@@ -30,6 +30,18 @@ def test_to_record_prefixes_and_converts_types():
     assert record["cr123_citedclauses"] is None
 
 
+def test_to_record_uses_readable_values():
+    row = {**_row(), "VEH_BODY": "STNWG", "GENDER": "F", "DRIVER_AGE_BAND": "mid"}
+    record = to_record(row, "cr123")
+    assert record["cr123_vehbody"] == "Station wagon"
+    assert record["cr123_gender"] == "Female"
+    assert record["cr123_driverageband"] == "Mid"
+
+
+def test_unknown_vehicle_code_falls_back_to_title_case():
+    assert to_record({**_row(), "VEH_BODY": "WEIRD"}, "cr123")["cr123_vehbody"] == "Weird"
+
+
 def test_to_record_never_sends_app_owned_columns():
     record = to_record(_row(), "cr123")
     for suffix, _ in APP_COLUMNS:

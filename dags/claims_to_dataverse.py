@@ -37,7 +37,9 @@ def claims_to_dataverse():
     def ensure_table() -> str:
         from claims_pipeline.dataverse import DataverseClient, DataverseConfig
 
-        return DataverseClient(DataverseConfig.from_env()).ensure_table()
+        client = DataverseClient(DataverseConfig.from_env())
+        client.ensure_notes_table()
+        return client.ensure_table()
 
     @task
     def sync_queue(entity_set: str) -> dict:
