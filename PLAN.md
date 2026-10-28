@@ -56,6 +56,9 @@ Diagram: https://claude.ai/artifact/L8rWMDhex8qzUuiFbmFjhZ (private to the owner
 - `claims_pipeline/`: **new** package — extract (CRAN `dataCar` tarball) → transform (derive keys/dates, sort, cap at 100,000) → load (Snowflake MERGE). `python -m claims_pipeline run [--dry-run]`.
 - `dags/motor_claims_ingest.py`: **new**, thin Airflow DAG wrapping `claims_pipeline`.
 - `dbt/`: **new** dbt project — `stg_motor_claims` / `fct_motor_claims` models plus schema and singular tests (uniqueness, date validity, claim/amount consistency, row-cap guard).
+- `docs/pds/ute-cover-pds.md`: **new**, synthetic "Outback Ute Cover" PDS. Numbered clauses (2.1 covered vehicles, 2.2 eligible drivers, 3.x policy period, 4.x amounts, 6.1 repeat claims) each name the claims column they are checked against. This is the document DAG A parses and embeds. Clause 2.2 (female drivers only) is a deliberate test rule, labelled as such in the text.
+- `snowflake/04_claim_assessment.sql`: **new**, `CURATED.V_CLAIM_ASSESSMENT` applies the PDS rules deterministically to every claim (`recommended_outcome`, `cited_clauses`, `conditions`). The Advisor retrieves clause text by RAG and takes the outcome from here. The Verifier re-checks human decisions against it. Thresholds live in one `rules` CTE.
+- `snowflake/05_claim_queue.sql`: **new**, `CURATED.V_CLAIM_QUEUE`, a deterministic 100-claim demo queue (25 ACCEPT, 25 REFER, 50 DECLINE). The real data is 97.4% DECLINE under these rules, so a random queue would not demo well.
 - `.github/workflows/motor-claims-daily.yml`: **new**, daily cron (+ manual dispatch) GitHub Actions run of the pipeline and `dbt build`.
 - `scripts/check-access.ps1`: read-only connectivity checks (Azure, pac, Snowflake).
 - `scripts/connect-personal.ps1`: signs in to the personal Azure subscription and Power Platform.
