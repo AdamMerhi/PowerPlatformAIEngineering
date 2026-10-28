@@ -1,4 +1,4 @@
-# Outback Ute Cover — Product Disclosure Statement
+# Outback Cover — Product Disclosure Statement
 
 > **Synthetic document.** Fictional insurer and fictional product, written for the Claims PDS Agent POC.
 > Not real insurance terms. Clause numbers are stable IDs: the Advisor and Verifier cite them.
@@ -8,13 +8,13 @@ The field in brackets after a clause title is the claims-data column the clause 
 
 ## 1. About this cover
 
-**1.1 What this product is.** Outback Ute Cover is comprehensive motor insurance for work and utility vehicles. It pays for loss or damage to the insured vehicle caused by an accident, theft, fire or storm during the policy period.
+**1.1 What this product is.** Outback Cover is comprehensive motor insurance for utility vehicles, buses and station wagons. It pays for loss or damage to the insured vehicle caused by an accident, theft, fire or storm during the policy period.
 
 **1.2 Who we insure.** We insure a small, defined group of drivers and vehicles. Clauses 2.1 and 2.2 set out exactly who and what is eligible. A claim that falls outside them is not covered, whatever its cause.
 
 ## 2. Eligibility
 
-**2.1 Covered vehicles** (`VEH_BODY`). We only cover the following vehicle body types: utility vehicles (UTE), panel vans (PANVN) and trucks (TRUCK). We do not cover sedans, hatchbacks, station wagons, hardtops, coupes, convertibles, roadsters, minibuses, buses or motorised caravans. A claim for a vehicle of any other body type is declined.
+**2.1 Covered vehicles** (`VEH_BODY`). We only cover the following vehicle body types: utility vehicles (UTE), buses (BUS) and station wagons (STNWG). We do not cover sedans, hatchbacks, panel vans, trucks, hardtops, coupes, convertibles, roadsters, minibuses or motorised caravans. A claim for a vehicle of any other body type is declined.
 
 **2.2 Eligible drivers** (`GENDER`). This product is offered only to female drivers. A claim where the policy driver is not female is declined. This is a deliberate rule of this synthetic product, used to test whether the agent applies an eligibility clause consistently and whether the Verifier flags it.
 

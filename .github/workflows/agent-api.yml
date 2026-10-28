@@ -1,0 +1,91 @@
+name: Agent API
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "agent_api/**"
+      - "claims_pipeline/dataverse.py"
+      - "docs/pds/**"
+      - "Dockerfile"
+      - ".dockerignore"
+      - "requirements-agent.txt"
+      - "tests/test_agent_*.py"
+      - ".github/workflows/agent-api.yml"
+  pull_request:
+    paths:
+      - "agent_api/**"
+      - "claims_pipeline/dataverse.py"
+      - "docs/pds/**"
+      - "Dockerfile"
+      - ".dockerignore"
+      - "requirements-agent.txt"
+      - "tests/test_agent_*.py"
+  workflow_dispatch: {}
+
+concurrency:
+  group: agent-api-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Lint and unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+      - name: Install dependencies
+        run: pip install -r requirements-agent.txt "pytest>=8.0" "ruff>=0.6" httpx
+      - name: Lint
+        run: ruff check agent_api claims_pipeline tests
+      - name: Unit tests
+        run: pytest tests/test_agent_chunking.py tests/test_agent_chains.py tests/test_agent_app.py tests/test_dataverse.py -v
+
+  image:
+    name: Build image and smoke test
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Image name (registry paths must be lower case)
+        run: echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/claims-agent" >> "$GITHUB_ENV"
+
+      - name: Build (this also builds the vector index from docs/pds)
+        run: docker build -t "$IMAGE:${GITHUB_SHA}" .
+
+      - name: Smoke test, offline (index and embedding model must be inside the image)
+        run: |
+          docker run --rm --network none "$IMAGE:${GITHUB_SHA}" python -c "
+          from agent_api.retrieval import Retriever
+          r = Retriever()
+          print('PDS version', r.pds_version, 'clauses', sorted(r.pds_clause_ids()))
+          assert {'2.1', '2.2', '7.1'} <= r.pds_clause_ids()"
+
+      - name: Smoke test, service starts and rejects calls without a key
+        run: |
+          docker run -d --name agent -p 8080:8080 -e AGENT_API_KEY=ci-key "$IMAGE:${GITHUB_SHA}"
+          for i in $(seq 1 20); do curl -fs localhost:8080/health && break || sleep 2; done
+          test "$(curl -s -o /dev/null -w '%{http_code}' -X POST localhost:8080/assess -H 'content-type: application/json' -d '{"claim_id":"x"}')" = "401"
+          docker rm -f agent
+
+      - name: Log in to GitHub Container Registry
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Push image (main only)
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        run: |
+          docker tag "$IMAGE:${GITHUB_SHA}" "$IMAGE:latest"
+          docker push "$IMAGE:${GITHUB_SHA}"
+          docker push "$IMAGE:latest"

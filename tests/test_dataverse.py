@@ -30,6 +30,18 @@ def test_to_record_prefixes_and_converts_types():
     assert record["cr123_citedclauses"] is None
 
 
+def test_to_record_uses_readable_values():
+    row = {**_row(), "VEH_BODY": "STNWG", "GENDER": "F", "DRIVER_AGE_BAND": "mid"}
+    record = to_record(row, "cr123")
+    assert record["cr123_vehbody"] == "Station wagon"
+    assert record["cr123_gender"] == "Female"
+    assert record["cr123_driverageband"] == "Mid"
+
+
+def test_unknown_vehicle_code_falls_back_to_title_case():
+    assert to_record({**_row(), "VEH_BODY": "WEIRD"}, "cr123")["cr123_vehbody"] == "Weird"
+
+
 def test_to_record_never_sends_app_owned_columns():
     record = to_record(_row(), "cr123")
     for suffix, _ in APP_COLUMNS:
@@ -39,6 +51,21 @@ def test_to_record_never_sends_app_owned_columns():
 def test_every_source_column_has_attribute_metadata():
     for _, suffix, kind in SOURCE_COLUMNS:
         assert attribute_metadata(f"cr123_{suffix}", suffix, kind)["SchemaName"] == f"cr123_{suffix}"
+
+
+def test_agent_tables_have_labels_and_valid_column_kinds():
+    from claims_pipeline.dataverse import AGENT_TABLES, ATTRIBUTE_TYPES, LABELS
+
+    for _display, _plural, _description, primary, columns in AGENT_TABLES.values():
+        assert primary in LABELS
+        for suffix, kind in columns:
+            assert suffix in LABELS and kind in ATTRIBUTE_TYPES
+            assert attribute_metadata(f"cr123_{suffix}", LABELS[suffix], kind)["SchemaName"] == f"cr123_{suffix}"
+
+
+def test_boolean_columns_carry_yes_no_options():
+    meta = attribute_metadata("cr123_agrees", "Agrees", "bool")
+    assert meta["OptionSet"]["TrueOption"]["Value"] == 1 and meta["OptionSet"]["FalseOption"]["Value"] == 0
 
 
 def test_unknown_kind_rejected():

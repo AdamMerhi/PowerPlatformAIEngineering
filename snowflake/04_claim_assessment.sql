@@ -10,7 +10,7 @@ USE DATABASE CLAIMS_POC;
 
 CREATE OR REPLACE VIEW CURATED.V_CLAIM_ASSESSMENT AS
 WITH rules AS (
-  SELECT ARRAY_CONSTRUCT('UTE', 'PANVN', 'TRUCK') AS covered_vehicles,  -- clause 2.1
+  SELECT ARRAY_CONSTRUCT('UTE', 'BUS', 'STNWG') AS covered_vehicles,    -- clause 2.1
          'F'    AS eligible_gender,                                      -- clause 2.2
          0.70   AS min_exposure,                                         -- clause 3.2
          200    AS excess,                                               -- clause 4.1

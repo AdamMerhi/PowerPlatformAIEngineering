@@ -48,6 +48,30 @@ SOURCE_COLUMNS = [
     ("CONDITIONS", "conditions", "memo"),
 ]
 
+# Claim Note table: free-text notes and status-change history entered in the canvas app.
+NOTE_TABLE_SUFFIX = "claimnote"
+NOTE_COLUMNS = [
+    ("claimkey", "string"),  # the claim's srcrowid
+    ("body", "memo"),
+    ("author", "string"),
+    ("kind", "string"),  # "Note" or "Status change"
+]
+
+# Agent results, written by the Agent API: (display, plural, description, primary column, columns).
+AGENT_TABLES = {
+    "claimassessment": (
+        "Claim Assessment", "Claim Assessments", "AI assessment of a claim against the PDS", "headline",
+        [("claimkey", "string"), ("outcome", "string"), ("summary", "memo"), ("clauses", "string"),
+         ("pdsversion", "string"), ("model", "string")],
+    ),
+    "decisioncheck": (
+        "Decision Check", "Decision Checks", "Independent check of a submitted decision against the PDS", "headline",
+        [("claimkey", "string"), ("decision", "string"), ("agrees", "bool"), ("reasonsupported", "bool"),
+         ("requiresmanager", "bool"), ("correctoutcome", "string"), ("finding", "memo"), ("clauses", "string"),
+         ("pdsversion", "string"), ("model", "string")],
+    ),
+}
+
 # Written by the canvas app (accept / decline / override). The sync never sends these.
 APP_COLUMNS = [
     ("decision", "string"),
@@ -55,6 +79,49 @@ APP_COLUMNS = [
     ("decidedby", "string"),
     ("decidedat", "datetime"),
 ]
+
+
+# Display names shown by the canvas app and model-driven views (keyed by attribute suffix).
+LABELS = {
+    "srcrowid": "Source row ID", "vehbody": "Vehicle body", "gender": "Gender", "agecat": "Age category",
+    "driverageband": "Driver age band", "vehvalue": "Vehicle value ($10k)", "exposure": "Exposure (years)",
+    "numclaims": "Number of claims", "claimamount": "Claim amount ($)", "policystartdate": "Policy start",
+    "policyenddate": "Policy end", "lossdate": "Loss date", "recommendedoutcome": "Rules outcome",
+    "citedclauses": "Cited clauses", "conditions": "Conditions", "decision": "Decision",
+    "decisionreason": "Decision reason", "decidedby": "Decided by", "decidedat": "Decided at",
+    "summary": "Summary", "claimkey": "Claim key", "body": "Note", "author": "Author", "kind": "Type",
+    "headline": "Headline", "outcome": "Outcome", "clauses": "Clauses", "pdsversion": "PDS version",
+    "model": "Model", "agrees": "Agrees with PDS", "reasonsupported": "Reason supported",
+    "requiresmanager": "Requires line manager", "correctoutcome": "Correct outcome", "finding": "Finding",
+}
+
+# Source codes -> readable values for the case record (Snowflake keeps the raw codes).
+VEHICLE_BODY = {
+    "BUS": "Bus", "CONVT": "Convertible", "COUPE": "Coupe", "HBACK": "Hatchback", "HDTOP": "Hardtop",
+    "MCARA": "Motorised caravan", "MIBUS": "Minibus", "PANVN": "Panel van", "RDSTR": "Roadster",
+    "SEDAN": "Sedan", "STNWG": "Station wagon", "TRUCK": "Truck", "UTE": "Utility",
+}
+GENDER = {"M": "Male", "F": "Female"}
+
+# Metadata type used to read/update each kind of column.
+ATTRIBUTE_TYPES = {
+    "string": "StringAttributeMetadata", "memo": "MemoAttributeMetadata", "int": "IntegerAttributeMetadata",
+    "decimal": "DecimalAttributeMetadata", "date": "DateTimeAttributeMetadata",
+    "datetime": "DateTimeAttributeMetadata", "bool": "BooleanAttributeMetadata",
+}
+
+
+def display_value(suffix: str, value):
+    """Readable form of a code for the case record (vehicle body, gender, age band)."""
+    if not isinstance(value, str):
+        return value
+    if suffix == "vehbody":
+        return VEHICLE_BODY.get(value.upper(), value.title())
+    if suffix == "gender":
+        return GENDER.get(value.upper(), value)
+    if suffix == "driverageband":
+        return value.title()
+    return value
 
 
 @dataclass(frozen=True)
@@ -88,6 +155,8 @@ def to_record(row: dict, prefix: str) -> dict:
                 value = int(value)
             elif kind == "date" and isinstance(value, (date, datetime)):
                 value = value.strftime("%Y-%m-%d")
+            else:
+                value = display_value(suffix, value)
         record[f"{prefix}_{suffix}"] = value
     return record
 
@@ -121,6 +190,11 @@ def attribute_metadata(schema_name: str, display: str, kind: str) -> dict:
     if kind == "datetime":
         return {"@odata.type": "Microsoft.Dynamics.CRM.DateTimeAttributeMetadata", "Format": "DateAndTime",
                 "DateTimeBehavior": {"Value": "UserLocal"}, **base}
+    if kind == "bool":
+        return {"@odata.type": "Microsoft.Dynamics.CRM.BooleanAttributeMetadata", "OptionSet": {
+                    "@odata.type": "Microsoft.Dynamics.CRM.BooleanOptionSetMetadata",
+                    "TrueOption": {"Value": 1, "Label": _label("Yes")},
+                    "FalseOption": {"Value": 0, "Label": _label("No")}}, **base}
     raise ValueError(f"unknown attribute kind: {kind}")
 
 
@@ -201,9 +275,74 @@ class DataverseClient:
                 continue
             logger.info("adding column %s", schema)
             self._request("POST", f"/EntityDefinitions(LogicalName='{self.logical_name}')/Attributes",
-                          json=attribute_metadata(schema, suffix, kind))
+                          json=attribute_metadata(schema, LABELS.get(suffix, suffix), kind))
+        self._apply_labels(self.logical_name, [(s, k) for _, s, k in SOURCE_COLUMNS] + APP_COLUMNS)
         self._request("POST", "/PublishAllXml", json={})
         return self.entity_set()
+
+    def _apply_labels(self, logical: str, columns: list[tuple[str, str]]) -> None:
+        """Set readable display names on existing columns (idempotent; only writes when a label differs)."""
+        for suffix, kind in columns:
+            want = LABELS.get(suffix)
+            if not want:
+                continue
+            base = f"/EntityDefinitions(LogicalName='{logical}')/Attributes(LogicalName='{self.prefix}_{suffix}')"
+            resp = self._request("GET", f"{base}/Microsoft.Dynamics.CRM.{ATTRIBUTE_TYPES[kind]}")
+            if resp.status_code == 404:
+                continue
+            meta = resp.json()
+            labels = (meta.get("DisplayName") or {}).get("LocalizedLabels") or []
+            if labels and labels[0].get("Label") == want:
+                continue
+            logger.info("renaming %s_%s -> %s", self.prefix, suffix, want)
+            body = attribute_metadata(f"{self.prefix}_{suffix}", want, kind)
+            body["MetadataId"] = meta["MetadataId"]
+            if "MaxLength" in meta:
+                body["MaxLength"] = meta["MaxLength"]  # never shrink an existing column
+            self._request("PUT", base, json=body, headers={"MSCRM.MergeLabels": "true"})
+
+    def ensure_simple_table(self, suffix: str, display: str, plural: str, description: str,
+                            primary_suffix: str, columns: list[tuple[str, str]]) -> str:
+        """Create a small table (a text primary column plus typed columns) if missing; returns its entity set."""
+        p = self.prefix
+        logical = f"{p}_{suffix}"
+        probe = self._request("GET", f"/EntityDefinitions(LogicalName='{logical}')?$select=EntitySetName")
+        if probe.status_code == 404:
+            logger.info("creating table %s", logical)
+            self._request("POST", "/EntityDefinitions", json={
+                "@odata.type": "Microsoft.Dynamics.CRM.EntityMetadata",
+                "SchemaName": logical,
+                "DisplayName": _label(display),
+                "DisplayCollectionName": _label(plural),
+                "Description": _label(description),
+                "OwnershipType": "UserOwned",
+                "HasActivities": False,
+                "HasNotes": False,
+                "Attributes": [{**attribute_metadata(f"{p}_{primary_suffix}", LABELS.get(primary_suffix, primary_suffix),
+                                                     "string"), "IsPrimaryName": True, "MaxLength": 200}],
+            })
+        existing = {a["LogicalName"] for a in self._request(
+            "GET", f"/EntityDefinitions(LogicalName='{logical}')/Attributes?$select=LogicalName"
+        ).json()["value"]}
+        for col, kind in columns:
+            if f"{p}_{col}" in existing:
+                continue
+            logger.info("adding column %s_%s", p, col)
+            self._request("POST", f"/EntityDefinitions(LogicalName='{logical}')/Attributes",
+                          json=attribute_metadata(f"{p}_{col}", LABELS.get(col, col), kind))
+        self._apply_labels(logical, columns)
+        self._request("POST", "/PublishAllXml", json={})
+        return self._request(
+            "GET", f"/EntityDefinitions(LogicalName='{logical}')?$select=EntitySetName").json()["EntitySetName"]
+
+    def ensure_notes_table(self) -> str:
+        """Create the Claim Note table (specialist notes and status history) if missing."""
+        return self.ensure_simple_table(NOTE_TABLE_SUFFIX, "Claim Note", "Claim Notes",
+                                        "Specialist notes and status history for a claim", "summary", NOTE_COLUMNS)
+
+    def ensure_agent_tables(self) -> dict[str, str]:
+        """Create the tables that hold the agent's assessments and decision checks."""
+        return {suffix: self.ensure_simple_table(suffix, *spec) for suffix, spec in AGENT_TABLES.items()}
 
     def existing_ids(self, entity_set: str) -> dict[str, str]:
         """Map source row id -> Dataverse record id for every row already present."""
@@ -265,6 +404,8 @@ def main(argv: list[str]) -> int:
         client = DataverseClient(DataverseConfig.from_env())
         if command == "create-table":
             print("entity set:", client.ensure_table())
+            print("notes entity set:", client.ensure_notes_table())
+            print("agent entity sets:", client.ensure_agent_tables())
         elif command == "sync":
             stats = client.upsert_claims(read_queue())
             print(stats)
