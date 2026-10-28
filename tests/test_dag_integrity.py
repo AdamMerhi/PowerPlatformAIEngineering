@@ -31,8 +31,14 @@ def test_motor_claims_dag_loaded():
 
     # Airflow 3's DagBag dropped the include_examples kwarg; scoping
     # dag_folder to our own dags/ directory achieves the same thing.
+    #
+    # Use dagbag.dags (populated purely by parsing) rather than
+    # dagbag.get_dag(), which in Airflow 3 queries the metadata DB for
+    # the DAG's current version -- that DB is never initialized here
+    # (no `airflow db migrate` has run), so get_dag() fails with
+    # "no such table: dag" even though parsing itself succeeded.
     dagbag = DagBag(dag_folder=str(DAGS_DIR))
-    dag = dagbag.get_dag("motor_claims_ingest")
-    assert dag is not None
+    assert "motor_claims_ingest" in dagbag.dags
+    dag = dagbag.dags["motor_claims_ingest"]
     task_ids = set(dag.task_ids)
     assert {"extract", "transform_task", "load_task", "dbt_build"} <= task_ids
