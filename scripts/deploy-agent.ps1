@@ -64,7 +64,10 @@ $envVars = @(
   "AZURE_TENANT_ID=$($env:AZURE_TENANT_ID)",
   "AZURE_CLIENT_ID=$($env:AZURE_CLIENT_ID)",
   "AZURE_CLIENT_SECRET=secretref:dataverse-secret",
-  "DATAVERSE_URL=$($env:DATAVERSE_URL)"
+  "DATAVERSE_URL=$($env:DATAVERSE_URL)",
+  # Changes on every run so Container Apps starts a new revision and re-pulls the image even though the tag
+  # (":latest") is unchanged. Without it a redeploy can silently keep running the old code.
+  "DEPLOY_STAMP=$(Get-Date -Format 'yyyyMMddHHmmss')"
 )
 
 $appExists = az containerapp show -n $AppName -g $ResourceGroup --query name -o tsv 2>$null

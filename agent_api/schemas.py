@@ -68,6 +68,22 @@ class VerifierDraft(BaseModel):
     clause_ids: list[str]
 
 
+class AskDraft(BaseModel):
+    answered: bool  # false when the passages do not contain the answer
+    answer: str
+    clause_ids: list[str]
+
+
+class Evidence(BaseModel):
+    """A passage retrieved from the index and shown to the model: what it read."""
+
+    clause_id: str
+    doc_type: str  # "pds" (binding policy term) or "primer" (background only)
+    title: str
+    text: str
+    distance: float | None  # smaller is a closer match; None when included without a search
+
+
 # What the API returns.
 class Assessment(BaseModel):
     claim_id: str
@@ -77,6 +93,7 @@ class Assessment(BaseModel):
     clauses: list[ClauseRef]
     pds_version: str
     model: str
+    evidence: list[Evidence] | None = None  # only when include_evidence is set
 
 
 class DecisionCheck(BaseModel):
@@ -90,14 +107,32 @@ class DecisionCheck(BaseModel):
     clauses: list[ClauseRef]
     pds_version: str
     model: str
+    evidence: list[Evidence] | None = None
+
+
+class AskResponse(BaseModel):
+    question: str
+    answered: bool
+    answer: str
+    clauses: list[ClauseRef]
+    evidence: list[Evidence]
+    pds_version: str
+    model: str
 
 
 class AssessRequest(BaseModel):
     claim_id: str
     refresh: bool = False  # true forces a new assessment instead of the cached one
+    include_evidence: bool = False  # true also returns the passages the model read
 
 
 class VerifyRequest(BaseModel):
     claim_id: str
     decision: str  # "Accepted" or "Declined"
     reason: str = ""
+    include_evidence: bool = False
+
+
+class AskRequest(BaseModel):
+    question: str
+    claim_id: str | None = None  # optional: ground the answer in one claim's facts
