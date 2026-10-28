@@ -57,6 +57,21 @@ NOTE_COLUMNS = [
     ("kind", "string"),  # "Note" or "Status change"
 ]
 
+# Agent results, written by the Agent API: (display, plural, description, primary column, columns).
+AGENT_TABLES = {
+    "claimassessment": (
+        "Claim Assessment", "Claim Assessments", "AI assessment of a claim against the PDS", "headline",
+        [("claimkey", "string"), ("outcome", "string"), ("summary", "memo"), ("clauses", "string"),
+         ("pdsversion", "string"), ("model", "string")],
+    ),
+    "decisioncheck": (
+        "Decision Check", "Decision Checks", "Independent check of a submitted decision against the PDS", "headline",
+        [("claimkey", "string"), ("decision", "string"), ("agrees", "bool"), ("reasonsupported", "bool"),
+         ("requiresmanager", "bool"), ("correctoutcome", "string"), ("finding", "memo"), ("clauses", "string"),
+         ("pdsversion", "string"), ("model", "string")],
+    ),
+}
+
 # Written by the canvas app (accept / decline / override). The sync never sends these.
 APP_COLUMNS = [
     ("decision", "string"),
@@ -75,6 +90,9 @@ LABELS = {
     "citedclauses": "Cited clauses", "conditions": "Conditions", "decision": "Decision",
     "decisionreason": "Decision reason", "decidedby": "Decided by", "decidedat": "Decided at",
     "summary": "Summary", "claimkey": "Claim key", "body": "Note", "author": "Author", "kind": "Type",
+    "headline": "Headline", "outcome": "Outcome", "clauses": "Clauses", "pdsversion": "PDS version",
+    "model": "Model", "agrees": "Agrees with PDS", "reasonsupported": "Reason supported",
+    "requiresmanager": "Requires line manager", "correctoutcome": "Correct outcome", "finding": "Finding",
 }
 
 # Source codes -> readable values for the case record (Snowflake keeps the raw codes).
@@ -89,7 +107,7 @@ GENDER = {"M": "Male", "F": "Female"}
 ATTRIBUTE_TYPES = {
     "string": "StringAttributeMetadata", "memo": "MemoAttributeMetadata", "int": "IntegerAttributeMetadata",
     "decimal": "DecimalAttributeMetadata", "date": "DateTimeAttributeMetadata",
-    "datetime": "DateTimeAttributeMetadata",
+    "datetime": "DateTimeAttributeMetadata", "bool": "BooleanAttributeMetadata",
 }
 
 
@@ -172,6 +190,11 @@ def attribute_metadata(schema_name: str, display: str, kind: str) -> dict:
     if kind == "datetime":
         return {"@odata.type": "Microsoft.Dynamics.CRM.DateTimeAttributeMetadata", "Format": "DateAndTime",
                 "DateTimeBehavior": {"Value": "UserLocal"}, **base}
+    if kind == "bool":
+        return {"@odata.type": "Microsoft.Dynamics.CRM.BooleanAttributeMetadata", "OptionSet": {
+                    "@odata.type": "Microsoft.Dynamics.CRM.BooleanOptionSetMetadata",
+                    "TrueOption": {"Value": 1, "Label": _label("Yes")},
+                    "FalseOption": {"Value": 0, "Label": _label("No")}}, **base}
     raise ValueError(f"unknown attribute kind: {kind}")
 
 
@@ -278,38 +301,48 @@ class DataverseClient:
                 body["MaxLength"] = meta["MaxLength"]  # never shrink an existing column
             self._request("PUT", base, json=body, headers={"MSCRM.MergeLabels": "true"})
 
-    def ensure_notes_table(self) -> str:
-        """Create the Claim Note table (specialist notes and status history) if missing."""
+    def ensure_simple_table(self, suffix: str, display: str, plural: str, description: str,
+                            primary_suffix: str, columns: list[tuple[str, str]]) -> str:
+        """Create a small table (a text primary column plus typed columns) if missing; returns its entity set."""
         p = self.prefix
-        logical = f"{p}_{NOTE_TABLE_SUFFIX}"
+        logical = f"{p}_{suffix}"
         probe = self._request("GET", f"/EntityDefinitions(LogicalName='{logical}')?$select=EntitySetName")
         if probe.status_code == 404:
             logger.info("creating table %s", logical)
             self._request("POST", "/EntityDefinitions", json={
                 "@odata.type": "Microsoft.Dynamics.CRM.EntityMetadata",
                 "SchemaName": logical,
-                "DisplayName": _label("Claim Note"),
-                "DisplayCollectionName": _label("Claim Notes"),
-                "Description": _label("Specialist notes and status history for a claim"),
+                "DisplayName": _label(display),
+                "DisplayCollectionName": _label(plural),
+                "Description": _label(description),
                 "OwnershipType": "UserOwned",
                 "HasActivities": False,
                 "HasNotes": False,
-                "Attributes": [{**attribute_metadata(f"{p}_summary", "Summary", "string"),
-                                "IsPrimaryName": True, "MaxLength": 200}],
+                "Attributes": [{**attribute_metadata(f"{p}_{primary_suffix}", LABELS.get(primary_suffix, primary_suffix),
+                                                     "string"), "IsPrimaryName": True, "MaxLength": 200}],
             })
         existing = {a["LogicalName"] for a in self._request(
             "GET", f"/EntityDefinitions(LogicalName='{logical}')/Attributes?$select=LogicalName"
         ).json()["value"]}
-        for suffix, kind in NOTE_COLUMNS:
-            if f"{p}_{suffix}" in existing:
+        for col, kind in columns:
+            if f"{p}_{col}" in existing:
                 continue
-            logger.info("adding column %s_%s", p, suffix)
+            logger.info("adding column %s_%s", p, col)
             self._request("POST", f"/EntityDefinitions(LogicalName='{logical}')/Attributes",
-                          json=attribute_metadata(f"{p}_{suffix}", LABELS.get(suffix, suffix), kind))
-        self._apply_labels(logical, NOTE_COLUMNS)
+                          json=attribute_metadata(f"{p}_{col}", LABELS.get(col, col), kind))
+        self._apply_labels(logical, columns)
         self._request("POST", "/PublishAllXml", json={})
         return self._request(
             "GET", f"/EntityDefinitions(LogicalName='{logical}')?$select=EntitySetName").json()["EntitySetName"]
+
+    def ensure_notes_table(self) -> str:
+        """Create the Claim Note table (specialist notes and status history) if missing."""
+        return self.ensure_simple_table(NOTE_TABLE_SUFFIX, "Claim Note", "Claim Notes",
+                                        "Specialist notes and status history for a claim", "summary", NOTE_COLUMNS)
+
+    def ensure_agent_tables(self) -> dict[str, str]:
+        """Create the tables that hold the agent's assessments and decision checks."""
+        return {suffix: self.ensure_simple_table(suffix, *spec) for suffix, spec in AGENT_TABLES.items()}
 
     def existing_ids(self, entity_set: str) -> dict[str, str]:
         """Map source row id -> Dataverse record id for every row already present."""
@@ -372,6 +405,7 @@ def main(argv: list[str]) -> int:
         if command == "create-table":
             print("entity set:", client.ensure_table())
             print("notes entity set:", client.ensure_notes_table())
+            print("agent entity sets:", client.ensure_agent_tables())
         elif command == "sync":
             stats = client.upsert_claims(read_queue())
             print(stats)

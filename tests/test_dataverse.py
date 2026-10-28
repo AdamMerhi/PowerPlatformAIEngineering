@@ -53,6 +53,21 @@ def test_every_source_column_has_attribute_metadata():
         assert attribute_metadata(f"cr123_{suffix}", suffix, kind)["SchemaName"] == f"cr123_{suffix}"
 
 
+def test_agent_tables_have_labels_and_valid_column_kinds():
+    from claims_pipeline.dataverse import AGENT_TABLES, ATTRIBUTE_TYPES, LABELS
+
+    for _display, _plural, _description, primary, columns in AGENT_TABLES.values():
+        assert primary in LABELS
+        for suffix, kind in columns:
+            assert suffix in LABELS and kind in ATTRIBUTE_TYPES
+            assert attribute_metadata(f"cr123_{suffix}", LABELS[suffix], kind)["SchemaName"] == f"cr123_{suffix}"
+
+
+def test_boolean_columns_carry_yes_no_options():
+    meta = attribute_metadata("cr123_agrees", "Agrees", "bool")
+    assert meta["OptionSet"]["TrueOption"]["Value"] == 1 and meta["OptionSet"]["FalseOption"]["Value"] == 0
+
+
 def test_unknown_kind_rejected():
     with pytest.raises(ValueError):
         attribute_metadata("cr123_x", "x", "blob")
