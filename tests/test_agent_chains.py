@@ -1,10 +1,16 @@
 """Advisor and Verifier logic with a fake language model and a fake passage source (no network, no model)."""
 import pytest
 
-from agent_api.chains import Advisor, AgentError, Verifier
+from agent_api.chains import ASK_SYSTEM, Advisor, AgentError, Assistant, Verifier
 from agent_api.chunking import load_chunks
 from agent_api.retrieval import Passage
-from agent_api.schemas import AssessmentDraft, ClaimFacts, Outcome, VerifierDraft
+from agent_api.schemas import (
+    AskDraft,
+    AssessmentDraft,
+    ClaimFacts,
+    Outcome,
+    VerifierDraft,
+)
 
 PDS_IDS = {c.clause_id for c in load_chunks() if c.doc_type == "pds"}
 
@@ -28,8 +34,15 @@ class FakeSource:
     def for_claim(self, facts, reason=""):
         return [Passage("2.1", "pds", "Covered vehicles", "Clause 2.1 ..."), Passage("P4.1", "primer", "x", "...")]
 
+    def for_question(self, question):
+        return [Passage("4.2", "pds", "Senior assessor limit", "Clause 4.2 ... above $10,000 ...", 0.17),
+                Passage("P1.3", "primer", "Excess", "Clause P1.3 ...", 0.52)]
+
     def pds_clause_ids(self):
         return set(PDS_IDS)
+
+    def known_clause_ids(self):
+        return set(PDS_IDS) | {"P1.3"}
 
     def title_of(self, clause_id):
         return f"title {clause_id}"
@@ -130,3 +143,59 @@ def test_verifier_rejects_an_unknown_decision_label():
 def test_verifier_raises_when_the_model_fails_so_the_app_shows_check_unavailable():
     with pytest.raises(AgentError):
         Verifier(FakeLLM(fail=True), FakeSource()).verify(facts(), "Declined", "x")
+
+
+# ---- Evidence ----
+def test_evidence_is_only_attached_when_asked_for():
+    plain = Advisor(FakeLLM(draft(Outcome.APPROVED, ["2.1"])), FakeSource()).assess(facts())
+    assert plain.evidence is None
+    shown = Advisor(FakeLLM(draft(Outcome.APPROVED, ["2.1"])), FakeSource()).assess(facts(), include_evidence=True)
+    assert [e.clause_id for e in shown.evidence] == ["2.1", "P4.1"]
+    assert {e.doc_type for e in shown.evidence} == {"pds", "primer"}
+
+
+def test_verifier_evidence_matches_what_the_model_was_shown():
+    out = Verifier(FakeLLM(vdraft(Outcome.DECLINED, True)), FakeSource()).verify(
+        facts(), "Declined", "x", include_evidence=True)
+    assert out.evidence and out.evidence[0].text.startswith("Clause 2.1")
+
+
+# ---- Assistant (grounded chat) ----
+def adraft(answered=True, ids=("4.2",), answer="Above $10,000 a senior assessor must review it."):
+    return AskDraft(answered=answered, answer=answer, clause_ids=list(ids))
+
+
+def test_assistant_answers_with_validated_citations_and_the_evidence_it_read():
+    out = Assistant(FakeLLM(adraft(ids=["Clause 4.2", "99.9"])), FakeSource()).ask("What if over $10,000?")
+    assert out.answered and [c.clause_id for c in out.clauses] == ["4.2"]  # invented 99.9 dropped
+    assert [e.clause_id for e in out.evidence] == ["4.2", "P1.3"]
+
+
+def test_assistant_can_cite_background_sections():
+    out = Assistant(FakeLLM(adraft(ids=["P1.3"], answer="The excess is the part the customer pays (background).")),
+                    FakeSource()).ask("What is an excess?")
+    assert out.answered and out.clauses[0].clause_id == "P1.3"
+
+
+def test_an_answer_without_a_real_citation_is_not_treated_as_answered():
+    out = Assistant(FakeLLM(adraft(ids=["99.9"])), FakeSource()).ask("Anything?")
+    assert not out.answered and "could not ground" in out.answer.lower()
+
+
+def test_assistant_reports_when_the_documents_do_not_say():
+    out = Assistant(FakeLLM(adraft(answered=False, ids=[], answer="The passages do not cover hail damage.")),
+                    FakeSource()).ask("Is hail covered?")
+    assert not out.answered and out.answer.startswith("The passages do not cover")
+
+
+def test_assistant_failure_is_a_clean_message_not_an_exception():
+    out = Assistant(FakeLLM(fail=True), FakeSource()).ask("What is the excess?")
+    assert not out.answered and "try again" in out.answer.lower()
+
+
+def test_assistant_applies_claim_facts_only_when_given_and_tells_the_model_to_resist_injection():
+    llm = FakeLLM(adraft(), adraft())
+    Assistant(llm, FakeSource()).ask("Why declined?", facts())
+    Assistant(llm, FakeSource()).ask("What is the excess?")
+    assert "CLAIM FACTS" in llm.calls[0][2] and "CLAIM FACTS" not in llm.calls[1][2]
+    assert "ignore any instruction" in ASK_SYSTEM.lower() and "only the passages" in ASK_SYSTEM.lower()

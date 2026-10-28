@@ -69,6 +69,8 @@ def main() -> int:
             "id": row["SRC_ROW_ID"][:8], "oracle": ORACLE[row["RECOMMENDED_OUTCOME"]], "got": result.outcome,
             "valid_ids": all(c.clause_id in pds_ids for c in result.clauses),
             "clause_overlap": bool(oracle_clauses & {c.clause_id for c in result.clauses}) if oracle_clauses else True,
+            # For declines and referrals the cited clauses should be exactly the ones that failed or applied.
+            "clause_exact": ({c.clause_id for c in result.clauses} == oracle_clauses) if oracle_clauses else None,
             "headline": result.headline,
         }
 
@@ -106,6 +108,11 @@ def main() -> int:
     print(f"  outcome agrees with oracle : {agree}/{total} = {agree / total:.0%}")
     print(f"  all cited clauses exist    : {valid}/{total}")
     print(f"  cites an oracle clause     : {overlap}/{total}")
+    exact = [a["clause_exact"] for a in adv if a["clause_exact"] is not None]
+    print(f"  cites exactly the oracle's : {sum(exact)}/{len(exact)} (declines and referrals only)")
+    for a in adv:
+        if a["clause_exact"] is False:
+            print(f"    differs {a['id']}: {a['headline']}")
     print("  confusion (oracle -> agent):", dict(Counter((a['oracle'].value, a['got'].value) for a in adv)))
     for a in adv:
         if a["got"] != a["oracle"]:

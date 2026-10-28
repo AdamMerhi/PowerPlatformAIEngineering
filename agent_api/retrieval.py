@@ -27,6 +27,7 @@ class Passage:
     doc_type: str  # "pds" (binding) or "primer" (background)
     title: str
     text: str
+    distance: float | None = None  # smaller is a closer match; None for passages added without a search
 
 
 class PassageSource(Protocol):
@@ -34,7 +35,11 @@ class PassageSource(Protocol):
 
     def for_claim(self, facts: ClaimFacts, reason: str = "") -> list[Passage]: ...
 
+    def for_question(self, question: str) -> list[Passage]: ...
+
     def pds_clause_ids(self) -> set[str]: ...
+
+    def known_clause_ids(self) -> set[str]: ...
 
     def title_of(self, clause_id: str) -> str: ...
 
@@ -62,8 +67,12 @@ class Retriever:
     def pds_clause_ids(self) -> set[str]:
         return set(self._pds_ids)
 
+    def known_clause_ids(self) -> set[str]:
+        """Every clause the index holds, policy terms and background alike."""
+        return {r["clause_id"] for r in self._by_id.values()}
+
     def title_of(self, clause_id: str) -> str:
-        row = self._by_id.get(f"pds:{clause_id}")
+        row = self._by_id.get(f"pds:{clause_id}") or self._by_id.get(f"primer:{clause_id}")
         return row["title"] if row else ""
 
     def _search(self, query: str, k: int, doc_type: str) -> list[dict]:
@@ -91,11 +100,34 @@ class Retriever:
         chosen: dict[str, dict] = {}
         for query in queries:
             for row in self._search(query, 2, "pds"):
-                chosen.setdefault(row["chunk_id"], row)
+                self._keep_closest(chosen, row)
         for chunk_id in ALWAYS_INCLUDE:
             if chunk_id in self._by_id:
                 chosen.setdefault(chunk_id, self._by_id[chunk_id])
         for row in self._search("a decline must rest on a policy term; referral is not a decision", 2, "primer"):
-            chosen.setdefault(row["chunk_id"], row)
-        passages = [Passage(r["clause_id"], r["doc_type"], r["title"], r["text"]) for r in chosen.values()]
+            self._keep_closest(chosen, row)
+        return self._passages(chosen)
+
+    def for_question(self, question: str) -> list[Passage]:
+        """Free-form question: only the few closest policy clauses and background sections, not the whole PDS."""
+        chosen: dict[str, dict] = {}
+        for row in self._search(question, 4, "pds") + self._search(question, 2, "primer"):
+            self._keep_closest(chosen, row)
+        return self._passages(chosen, by_distance=True)
+
+    @staticmethod
+    def _keep_closest(chosen: dict[str, dict], row: dict) -> None:
+        known = chosen.get(row["chunk_id"])
+        if known is None or row.get("_distance", 9) < known.get("_distance", 9):
+            chosen[row["chunk_id"]] = row
+
+    @staticmethod
+    def _passages(chosen: dict[str, dict], by_distance: bool = False) -> list[Passage]:
+        passages = [
+            Passage(r["clause_id"], r["doc_type"], r["title"], r["text"],
+                    round(float(r["_distance"]), 3) if r.get("_distance") is not None else None)
+            for r in chosen.values()
+        ]
+        if by_distance:  # closest first (chat); claims keep clause-number order so their prompts are unchanged
+            return sorted(passages, key=lambda p: (p.doc_type != "pds", p.distance if p.distance is not None else 9))
         return sorted(passages, key=lambda p: (p.doc_type != "pds", p.clause_id))
