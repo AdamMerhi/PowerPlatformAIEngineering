@@ -36,7 +36,7 @@ def main():
         cur = conn.cursor()
         cur.execute("SELECT CURRENT_USER(), CURRENT_ROLE(), CURRENT_WAREHOUSE()")
         print("connected as:", cur.fetchone())
-        for table in ("RAW.CLAIMS_RAW", "CURATED.CLAIM_RISK", "CURATED.DAG_RUN_LOG"):
+        for table in ("RAW.CLAIMS_RAW", "CURATED.PDS_CHUNKS", "CURATED.CLAIM_ASSESSMENTS", "CURATED.DAG_RUN_LOG"):
             try:
                 cur.execute(f"SELECT COUNT(*) FROM {table}")
                 print(f"{table}: {cur.fetchone()[0]} rows")
