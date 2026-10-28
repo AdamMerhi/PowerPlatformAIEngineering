@@ -1,0 +1,22 @@
+name: claims_motor_pipeline
+version: "1.0.0"
+config-version: 2
+
+profile: claims_motor_pipeline
+
+model-paths: ["models"]
+test-paths: ["tests"]
+macro-paths: ["macros"]
+
+clean-targets:
+  - "target"
+  - "dbt_packages"
+
+models:
+  claims_motor_pipeline:
+    staging:
+      +schema: CLEAN
+      +materialized: view
+    curated:
+      +schema: CURATED
+      +materialized: table

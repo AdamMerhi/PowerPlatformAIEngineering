@@ -35,11 +35,28 @@ __pycache__/
 *.pyc
 .venv/
 venv/
+.pytest_cache/
+.ruff_cache/
 
 # Logs and temp
 *.log
 tmp/
 temp/
+
+# dbt
+target/
+dbt_packages/
+logs/
+.user.yml
+
+# Airflow local metadata (not used -- Airflow doesn't run on Windows;
+# kept in case anyone runs `airflow standalone` under WSL)
+airflow.db
+airflow.cfg
+airflow-webserver.pid
+
+# Pipeline cache (downloaded source tarballs, intermediate parquet)
+.cache/
 
 # Snowflake / key material
 *.p8

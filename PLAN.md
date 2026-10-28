@@ -1,6 +1,6 @@
 # PLAN
 
-Handoff document. Read `CLAUDE.md` first, then this file. Last updated 2026-10-28.
+Handoff document. Read `CLAUDE.md` first, then this file. Last updated 2026-10-28 (DAG C built).
 
 ## Goal
 
@@ -34,9 +34,10 @@ Diagram: https://claude.ai/artifact/L8rWMDhex8qzUuiFbmFjhZ (private to the owner
 
 - **2-day slice, cheap stack.** Airflow in Docker Compose on one small VM (deallocate when idle), Qdrant embedded in the Agent API and rebuilt from Snowflake at start-up, Agent API on Container Apps scaled to zero, one chat model deployed (no embedding model, fastembed runs locally), free tiers for Language, Content Safety and Document Intelligence. No AKS.
 - **Orchestration.** LangChain (owner's choice) drives the Reader, Advisor, Verifier and Reporter chains against the Azure OpenAI deployment `powerapps-pds`. Retrieval is sparse (fastembed) through Qdrant, over PDS chunks stored in Snowflake.
-- **Use case and PDS.** Zurich Business Insurance Motor PDS (public PDF: https://www.zurich.com.au/-/media-assets/project/zurich-headless/shared/content/dam/au-documents/business-insurance/motor/motor-insurance-pds.pdf). The ASIC case (25-077MR) is the motivating story — a wrong decline found by QA — but the demo claims are synthetic motor claims, which is accepted even though the real case concerned trauma cover. The PDS is a public document; claims stay synthetic.
+- **Use case and PDS.** Zurich Business Insurance Motor PDS (public PDF: https://www.zurich.com.au/-/media-assets/project/zurich-headless/shared/content/dam/au-documents/business-insurance/motor/motor-insurance-pds.pdf). The ASIC case (25-077MR) is the motivating story — a wrong decline found by QA — but the demo claims are synthetic motor claims, which is accepted even though the real case concerned trauma cover. The PDS is a public document; claims stay synthetic. **Update:** the PDS the demo actually uses is now the synthetic Outback Ute Cover PDS (`docs/pds/ute-cover-pds.md`), because its numbered clauses map directly onto the `dataCar` columns and give a checkable accept/refer/decline outcome (`CURATED.V_CLAIM_ASSESSMENT`). The Zurich PDF remains the motivating reference only.
 - **Front end.** Canvas app builds its own chat screen (gallery + text input, Power Fx calling a Power Automate flow) instead of embedding a Copilot Studio agent. Dropped Copilot Studio to remove the embed-compatibility risk and the extra trial/app dependency, now that Azure AI Foundry and Power Platform cover the AI and front-end surfaces directly.
-- **Public claims data.** No public claim-level narratives are expected. DAG C takes a configurable source, plus synthetic narratives that cite real PDS clauses. Still to confirm.
+- **Public claims data.** DAG C's source is settled: `dataCar` from the CRAN R package `insuranceData` — 67,856 real Australian third-party motor policies (2004–2005), free, no account needed. It has no date fields, so `policy_start_date`/`policy_end_date`/`loss_date` are derived deterministically from a hash of each row (documented in `claims_pipeline/transform.py` and `dbt/models/staging/stg_motor_claims.yml`) rather than being source truth. Synthetic claim narratives citing real PDS clauses are still a separate, unconfirmed task for the Advisor/Verifier flow.
+- **DAG C transform/test tooling diverges from the rest of this plan on purpose.** The native-task design in `snowflake/02_dag.sql` (RAW→CLEAN→CURATED via Snowflake tasks) stays for the synthetic risk-scoring tables. DAG C instead uses **dbt** for its transforms and data-quality tests (`unique`/`not_null`/`accepted_values`/date-range/cross-field checks), orchestrated by a thin Airflow DAG (`dags/motor_claims_ingest.py`) whose actual daily run happens via **GitHub Actions** (`.github/workflows/motor-claims-daily.yml`, cron + manual dispatch), since Airflow doesn't run on the Windows dev laptop. Azure DevOps pipelines still own Power Platform solution ALM (Day 2 release pipeline) — this doesn't replace that, it's CI for one data pipeline.
 - **Sparse vectors.** Snowflake's vector type is dense only, so store `indices` and `values` arrays. Qdrant is the open-source index (Pinecone is hosted).
 
 ## Environment status (as of 2026-10-28)
@@ -53,9 +54,17 @@ Diagram: https://claude.ai/artifact/L8rWMDhex8qzUuiFbmFjhZ (private to the owner
 
 - `snowflake/00_bootstrap.sql`: role, warehouse with a resource monitor, database, schemas, service user. Still valid.
 - `snowflake/01_tables_and_seed.sql` and `snowflake/02_dag.sql`: written for the earlier risk-scoring design. **Rewrite** to the new design: PDS chunk and sparse vector tables, decisions, verifications and report tables, keep the RAW to CLEAN to CURATED task DAG and the claims sync view.
+- `snowflake/03_motor_claims_raw.sql`: **new**, DAG C's `RAW.MOTOR_CLAIMS_RAW` table. Deliberately separate from `RAW.CLAIMS_RAW`/`CURATED.CLAIM_RISK` so the two pipelines don't collide.
+- `claims_pipeline/`: **new** package — extract (CRAN `dataCar` tarball) → transform (derive keys/dates, sort, cap at 100,000) → load (Snowflake MERGE). `python -m claims_pipeline run [--dry-run]`.
+- `dags/motor_claims_ingest.py`: **new**, thin Airflow DAG wrapping `claims_pipeline`.
+- `dbt/`: **new** dbt project — `stg_motor_claims` / `fct_motor_claims` models plus schema and singular tests (uniqueness, date validity, claim/amount consistency, row-cap guard).
+- `docs/pds/ute-cover-pds.md`: **new**, synthetic "Outback Ute Cover" PDS. Numbered clauses (2.1 covered vehicles, 2.2 eligible drivers, 3.x policy period, 4.x amounts, 6.1 repeat claims) each name the claims column they are checked against. This is the document DAG A parses and embeds. Clause 2.2 (female drivers only) is a deliberate test rule, labelled as such in the text.
+- `snowflake/04_claim_assessment.sql`: **new**, `CURATED.V_CLAIM_ASSESSMENT` applies the PDS rules deterministically to every claim (`recommended_outcome`, `cited_clauses`, `conditions`). The Advisor retrieves clause text by RAG and takes the outcome from here. The Verifier re-checks human decisions against it. Thresholds live in one `rules` CTE.
+- `snowflake/05_claim_queue.sql`: **new**, `CURATED.V_CLAIM_QUEUE`, a deterministic 100-claim demo queue (25 ACCEPT, 25 REFER, 50 DECLINE). The real data is 97.4% DECLINE under these rules, so a random queue would not demo well.
+- `.github/workflows/motor-claims-daily.yml`: **new**, daily cron (+ manual dispatch) GitHub Actions run of the pipeline and `dbt build`.
 - `scripts/check-access.ps1`: read-only connectivity checks (Azure, pac, Snowflake).
 - `scripts/connect-personal.ps1`: signs in to the personal Azure subscription and Power Platform.
-- `scripts/check_snowflake.py`: Snowflake connectivity test, reads env vars.
+- `scripts/check_snowflake.py`: Snowflake connectivity test, reads env vars. Its key-pair auth block is the one reused in `claims_pipeline/config.py` — don't write a second auth path.
 - `INIT.md`: setup notes, needs a refresh after this handoff.
 
 ## Schedule
@@ -69,7 +78,8 @@ Diagram: https://claude.ai/artifact/L8rWMDhex8qzUuiFbmFjhZ (private to the owner
 
 ### Day 1: data, backend, security, pipeline
 - [ ] Rewrite Snowflake scripts, load synthetic claims and the PDS.
-- [ ] Airflow in Docker, DAGs A to C, Qdrant, fastembed.
+- [x] DAG C: `dataCar` → Snowflake RAW, dbt transforms/tests, GitHub Actions daily run. Built on `feat/motor-claims-dag`.
+- [ ] Airflow in Docker, DAGs A and B, Qdrant, fastembed.
 - [ ] Agent API: Advisor and Verifier working from the command line.
 - [ ] Key Vault, managed identity, Entra app registration for Dataverse.
 - [ ] First CI pipeline.
@@ -90,6 +100,6 @@ Diagram: https://claude.ai/artifact/L8rWMDhex8qzUuiFbmFjhZ (private to the owner
 
 ## Open questions
 
-- Which public source feeds DAG C, if any?
+- ~~Which public source feeds DAG C, if any?~~ Answered: `dataCar` (CRAN `insuranceData`). See "Decisions made" above.
 - Is Global Standard quota available for GPT-4o-mini on the personal subscription, or only Standard in East US 2 and Sweden Central?
 - Why does ai.azure.com say "You don't have permission to create resources in any subscription" for `amerhi@doubleyouthotmail.onmicrosoft.com`, who is the subscription owner? Check Access control (IAM) role assignment on the subscription in `portal.azure.com`, and confirm the AI Foundry UI has the correct directory/subscription selected (not a cached second account).

@@ -1,0 +1,30 @@
+version: 2
+
+models:
+  - name: fct_motor_claims
+    description: Curated motor-claims fact table, one row per src_row_id.
+    columns:
+      - name: src_row_id
+        tests:
+          - unique
+          - not_null
+
+      - name: claim_severity_band
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ["no_claim", "minor", "moderate", "severe"]
+
+      - name: policy_year
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [2004, 2005]
+
+    tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns:
+              - src_row_id

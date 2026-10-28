@@ -1,0 +1,110 @@
+name: Motor claims daily ingest
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "claims_pipeline/**"
+      - "dags/**"
+      - "dbt/**"
+      - "tests/**"
+      - "requirements*.txt"
+      - ".github/workflows/motor-claims-daily.yml"
+  pull_request:
+    paths:
+      - "claims_pipeline/**"
+      - "dags/**"
+      - "dbt/**"
+      - "tests/**"
+      - "requirements*.txt"
+  schedule:
+    # ~06:00 Australia/Sydney (AEDT, UTC+11) during DST.
+    - cron: "0 19 * * *"
+  workflow_dispatch: {}
+
+concurrency:
+  group: motor-claims-daily
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    name: Lint, unit tests, DAG parse, dbt parse
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt -r requirements-dev.txt
+
+      - name: Lint
+        run: ruff check claims_pipeline dags tests
+
+      - name: Unit tests
+        run: pytest tests/ -v
+
+      - name: dbt deps
+        run: dbt deps --project-dir dbt
+
+      - name: dbt parse (no warehouse credentials needed)
+        run: dbt parse --project-dir dbt --profiles-dir dbt
+        env:
+          SNOWFLAKE_ACCOUNT: placeholder
+          SNOWFLAKE_USER: placeholder
+          SNOWFLAKE_PRIVATE_KEY_PATH: ""
+
+  ingest:
+    name: Extract, load, dbt build
+    needs: validate
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Write Snowflake private key
+        run: |
+          echo "${{ secrets.SNOWFLAKE_PRIVATE_KEY_B64 }}" | base64 -d > "$RUNNER_TEMP/poc_svc.p8"
+
+      - name: Run pipeline (extract -> transform -> load)
+        run: python -m claims_pipeline run
+        env:
+          SNOWFLAKE_ACCOUNT: ${{ secrets.SNOWFLAKE_ACCOUNT }}
+          SNOWFLAKE_USER: ${{ secrets.SNOWFLAKE_USER }}
+          SNOWFLAKE_ROLE: ${{ secrets.SNOWFLAKE_ROLE }}
+          SNOWFLAKE_WAREHOUSE: ${{ secrets.SNOWFLAKE_WAREHOUSE }}
+          SNOWFLAKE_DATABASE: ${{ secrets.SNOWFLAKE_DATABASE }}
+          SNOWFLAKE_PRIVATE_KEY_PATH: ${{ runner.temp }}/poc_svc.p8
+
+      - name: dbt deps
+        run: dbt deps --project-dir dbt
+
+      - name: dbt build (run + test)
+        run: dbt build --project-dir dbt --profiles-dir dbt
+        env:
+          SNOWFLAKE_ACCOUNT: ${{ secrets.SNOWFLAKE_ACCOUNT }}
+          SNOWFLAKE_USER: ${{ secrets.SNOWFLAKE_USER }}
+          SNOWFLAKE_ROLE: ${{ secrets.SNOWFLAKE_ROLE }}
+          SNOWFLAKE_WAREHOUSE: ${{ secrets.SNOWFLAKE_WAREHOUSE }}
+          SNOWFLAKE_DATABASE: ${{ secrets.SNOWFLAKE_DATABASE }}
+          SNOWFLAKE_SCHEMA: RAW
+          SNOWFLAKE_PRIVATE_KEY_PATH: ${{ runner.temp }}/poc_svc.p8
+
+      - name: Upload dbt artifacts on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dbt-target
+          path: dbt/target
+          retention-days: 7
