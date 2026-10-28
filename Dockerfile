@@ -14,6 +14,9 @@ ENV PYTHONPATH=/install/lib/python3.13/site-packages
 RUN python -m agent_api.index_build /index
 
 FROM python:3.13-slim
+# Links the package to this repository so the workflow's GITHUB_TOKEN may create and push it on GHCR.
+LABEL org.opencontainers.image.source="https://github.com/AdamMerhi/PowerPlatformAIEngineering"
+LABEL org.opencontainers.image.description="Claims PDS Agent API (Advisor and Verifier)"
 RUN useradd --create-home --uid 10001 app
 WORKDIR /app
 COPY --from=build /install /usr/local
