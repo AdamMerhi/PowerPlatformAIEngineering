@@ -20,14 +20,18 @@ DAGS_DIR = Path(__file__).resolve().parent.parent / "dags"
 def test_dagbag_has_no_import_errors():
     from airflow.models import DagBag
 
-    dagbag = DagBag(dag_folder=str(DAGS_DIR), include_examples=False)
+    # Airflow 3's DagBag dropped the include_examples kwarg; scoping
+    # dag_folder to our own dags/ directory achieves the same thing.
+    dagbag = DagBag(dag_folder=str(DAGS_DIR))
     assert dagbag.import_errors == {}, dagbag.import_errors
 
 
 def test_motor_claims_dag_loaded():
     from airflow.models import DagBag
 
-    dagbag = DagBag(dag_folder=str(DAGS_DIR), include_examples=False)
+    # Airflow 3's DagBag dropped the include_examples kwarg; scoping
+    # dag_folder to our own dags/ directory achieves the same thing.
+    dagbag = DagBag(dag_folder=str(DAGS_DIR))
     dag = dagbag.get_dag("motor_claims_ingest")
     assert dag is not None
     task_ids = set(dag.task_ids)
